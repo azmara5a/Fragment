@@ -77,6 +77,4 @@ end)
 local UserInputService = game:GetService("UserInputService")
 UserInputService.InputBegan:Connect(function(input, gp)
     if not gp and input.KeyCode == Enum.KeyCode.RightShift then
-        Frame.Visible = not Frame.Visible
-    end
-end)
+        Frame.Visible = 
