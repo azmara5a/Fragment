@@ -156,11 +156,9 @@ function renderVault() {
       <label>Yeni not<textarea name="note" rows="4" maxlength="20000" placeholder="Notunu buraya yaz…" required></textarea></label>
       <button type="submit">Şifreli olarak kaydet</button>
     </form>
-    <div class="note-list"><h3>Kayıtlı notlar</h3><p class="small">Paylaşmak istediğin notları seç.</p><div id="notes"></div></div>
+    <div class="note-list"><h3>Kayıtlı notlar</h3><div id="notes"></div></div>
     <div class="tools">
-      <button id="share-selected" type="button">Seçili notları güvenli paylaş</button>
-      <button id="import-shared" class="secondary" type="button">Şifreli paylaşımı içe aktar</button>
-      <input id="shared-file" type="file" accept="application/json,.json" hidden>
+      <button id="share-vault" type="button">Şifreli kasanın dosyasını paylaş</button>
       <button id="export" class="secondary" type="button">Tüm kasanın şifreli yedeğini dışa aktar</button>
       <button id="change-password" class="secondary" type="button">Parolayı değiştir</button>
       <button id="show-recovery" class="secondary" type="button">Kurtarma anahtarını yenile</button>
@@ -168,9 +166,7 @@ function renderVault() {
     <p class="small">Bu cihazdaki kayıtlar şifreli. Başka telefona taşımak için şifreli yedeği aktar ve kurtarma/parola bilgilerini güvenli biçimde kullan.</p>`;
   document.querySelector("#lock-now").addEventListener("click", () => lock());
   document.querySelector("#note-form").addEventListener("submit", addNote);
-  document.querySelector("#share-selected").addEventListener("click", shareSelectedNotes);
-  document.querySelector("#import-shared").addEventListener("click", () => document.querySelector("#shared-file").click());
-  document.querySelector("#shared-file").addEventListener("change", importSharedNotes);
+  document.querySelector("#share-vault").addEventListener("click", shareVaultFile);
   document.querySelector("#export").addEventListener("click", exportBackup);
   document.querySelector("#change-password").addEventListener("click", changePassword);
   document.querySelector("#show-recovery").addEventListener("click", renewRecovery);
@@ -182,7 +178,7 @@ function renderNotes() {
   if (!root) return;
   if (!archive.notes.length) { root.innerHTML = '<p class="muted">Henüz not yok.</p>'; return; }
   root.innerHTML = archive.notes.map((note, index) => `
-    <article class="note"><label class="share-choice"><input class="share-note" type="checkbox" data-index="${index}" aria-label="Bu notu paylaş"> Paylaş</label><p>${escapeHtml(note.text)}</p><time>${escapeHtml(new Date(note.createdAt).toLocaleString("tr-TR"))}</time><button class="delete-note" data-index="${index}" type="button">Sil</button></article>`).join("");
+    <article class="note"><p>${escapeHtml(note.text)}</p><time>${escapeHtml(new Date(note.createdAt).toLocaleString("tr-TR"))}</time><button class="delete-note" data-index="${index}" type="button">Sil</button></article>`).join("");
   root.querySelectorAll(".delete-note").forEach((button) => button.addEventListener("click", async () => {
     archive.notes.splice(Number(button.dataset.index), 1);
     try { await persist(); renderNotes(); say("Not silindi."); }
@@ -199,69 +195,29 @@ async function addNote(event) {
   catch (error) { say("Kaydedilemedi: " + error.message, true); }
 }
 
-function bytesToB64Url(bytes) {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-function b64UrlToBytes(value) {
-  if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("Paylaşım dosyası geçersiz.");
-  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
-  return Uint8Array.from(atob(base64 + "=".repeat((4 - base64.length % 4) % 4)), c => c.charCodeAt(0));
-}
-async function deriveShareKey(password, salt) {
-  const material = await crypto.subtle.importKey("raw", new TextEncoder().encode(password.normalize("NFKC")), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey({name:"PBKDF2",salt,iterations:600000,hash:"SHA-256"},material,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]);
-}
-async function shareSelectedNotes() {
-  const indexes = [...document.querySelectorAll(".share-note:checked")].map(el => Number(el.dataset.index));
-  if (!indexes.length) return say("Önce paylaşmak istediğin notları seç.", true);
-  const password = prompt("Bu paylaşım için ayrı bir parola belirle (en az 12 karakter). Kasa parolanı kullanma:");
-  if (!password) return;
-  if (password.length < 12) return say("Paylaşım parolası en az 12 karakter olmalı.", true);
-  const confirmPassword = prompt("Paylaşım parolasını tekrar gir:");
-  if (password !== confirmPassword) return say("Parolalar eşleşmiyor; paylaşım oluşturulmadı.", true);
+async function shareVaultFile() {
   try {
-    const salt = crypto.getRandomValues(new Uint8Array(16));
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const key = await deriveShareKey(password, salt);
-    const selected = indexes.map(index => archive.notes[index]);
-    const plain = new TextEncoder().encode(JSON.stringify({notes:selected,createdAt:new Date().toISOString()}));
-    const cipher = await crypto.subtle.encrypt({name:"AES-GCM",iv,additionalData:new TextEncoder().encode("AHMET-PRIVATE:SHARE:v1")},key,plain);
-    const pkg = {format:"AHMET-PRIVATE-SHARE",version:1,algorithm:"PBKDF2-SHA256+A256GCM",iterations:600000,salt:bytesToB64Url(salt),iv:bytesToB64Url(iv),ciphertext:bytesToB64Url(new Uint8Array(cipher))};
-    const blob = new Blob([JSON.stringify(pkg)],{type:"application/json"});
-    const file = new File([blob],"ahmet-private-paylasim.json",{type:"application/json"});
+    const store = readStore();
+    const backup = {
+      format: "AHMET-PRIVATE-BACKUP", version: 1,
+      keyRecord: store.keyRecord, envelope: store.envelope
+    };
+    const file = new File([JSON.stringify(backup, null, 2)], "ahmet-private-encrypted-backup.json", {type:"application/json"});
     if (navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))) {
-      await navigator.share({title:"AHMET PRIVATE — şifreli paylaşım",text:"Bu dosya şifrelidir. Açmak için paylaşım parolasını ayrı kanaldan al.",files:[file]});
-      say("Android paylaşım menüsü açıldı. Parolayı dosyadan ayrı bir kanaldan gönder.");
+      await navigator.share({
+        title: "AHMET PRIVATE — şifreli kasa yedeği",
+        text: "Bu dosya AHMET PRIVATE kasasının şifreli yedeğidir. Açmak için kasa parolası veya kurtarma anahtarı gerekir.",
+        files: [file]
+      });
+      say("Şifreli kasa dosyası paylaşım menüsüne gönderildi.");
     } else {
-      downloadJson("ahmet-private-paylasim.json",pkg);
-      say("Şifreli paylaşım dosyası indirildi. Parolayı dosyadan ayrı bir kanaldan gönder.");
+      downloadJson("ahmet-private-encrypted-backup.json", backup);
+      say("Şifreli kasa dosyası indirildi. Android paylaşım menüsünden gönderebilirsin.");
     }
     touch();
-  } catch (error) { if (error.name !== "AbortError") say("Paylaşım oluşturulamadı: "+error.message,true); }
-}
-async function importSharedNotes(event) {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  try {
-    const pkg = JSON.parse(await file.text());
-    if (pkg.format !== "AHMET-PRIVATE-SHARE" || pkg.version !== 1 || pkg.iterations !== 600000) throw new Error("Bu dosya desteklenen AHMET PRIVATE paylaşımı değil.");
-    const password = prompt("Paylaşım parolasını gir:");
-    if (!password) return;
-    const salt=b64UrlToBytes(pkg.salt), iv=b64UrlToBytes(pkg.iv), ciphertext=b64UrlToBytes(pkg.ciphertext);
-    const key=await deriveShareKey(password,salt);
-    const plain=await crypto.subtle.decrypt({name:"AES-GCM",iv,additionalData:new TextEncoder().encode("AHMET-PRIVATE:SHARE:v1")},key,ciphertext);
-    const data=JSON.parse(new TextDecoder().decode(plain));
-    if (!Array.isArray(data.notes) || !data.notes.every(n=>typeof n.text==="string" && typeof n.createdAt==="string")) throw new Error("Paylaşım içeriği geçersiz.");
-    if (!confirm(data.notes.length+" not kasana eklenecek. Devam edilsin mi?")) return;
-    archive.notes.unshift(...data.notes);
-    await persist();
-    renderNotes();
-    say(data.notes.length+" not şifrelenerek kasana eklendi.");
-    touch();
-  } catch (error) { say("Paylaşım açılamadı. Parola yanlış veya dosya bozuk olabilir.",true); }
-  finally { event.target.value=""; }
+  } catch (error) {
+    if (error.name !== "AbortError") say("Kasa dosyası paylaşılamadı: " + error.message, true);
+  }
 }
 function downloadJson(name, value) {
   const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
