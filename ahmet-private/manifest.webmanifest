@@ -1,0 +1,12 @@
+{
+  "name": "AHMET PRIVATE",
+  "short_name": "PRIVATE",
+  "description": "Şifreli kişisel arşiv",
+  "lang": "tr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#101827",
+  "theme_color": "#101827",
+  "icons": []
+}
