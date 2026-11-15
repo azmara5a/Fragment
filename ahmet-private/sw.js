@@ -1,5 +1,5 @@
-const CACHE = "ahmet-private-shell-v4";
-const FILES = ["./", "./index.html", "./styles.css?v=4", "./app.js?v=4", "./crypto.js", "./manifest.webmanifest"];
+const CACHE = "ahmet-private-shell-v5";
+const FILES = ["./", "./index.html", "./styles.css?v=5", "./app.js?v=5", "./crypto.js", "./manifest.webmanifest"];
 
 self.addEventListener("install", event => {
   event.waitUntil(
